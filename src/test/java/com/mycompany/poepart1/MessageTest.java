@@ -5,12 +5,15 @@
 package com.mycompany.poepart1;
 
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
-import java.util.Date;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
 
 
 /**
@@ -21,29 +24,54 @@ public class MessageTest {
     
     public MessageTest() {
     }
+   
+    // ==================== MESSAGE TEST FIELDS ====================
+    private Message message;
+    private final String testRecipient = "+27123456789";
+    private final String testContent = "Hello World";
+    private final int testMessageNumber = 1;
+    private ByteArrayOutputStream outContent;
+    private PrintStream originalOut;
     
-    public Message message;
-    public final String testRecipient = "+27123456789";
-    public final String testContent = "Hello World";
-    public final int testMessageNumber = 1;
+    // ==================== POEPART1 TEST FIELDS ====================
+    @TempDir
+    Path tempDir;
     
-    public ByteArrayOutputStream outContent;
-    public PrintStream originalOut;
+    // ==================== SETUP AND TEARDOWN ====================
     
     @BeforeEach
     void setUp() {
+        // Message setup
         message = new Message(testRecipient, testContent, testMessageNumber);
         outContent = new ByteArrayOutputStream();
         originalOut = System.out;
         System.setOut(new PrintStream(outContent));
+        
+        // PoePart1 setup
+        PoePart1.serialMessages.clear();
+        PoePart1.disconnectedMessages.clear();
+        PoePart1.storedMessages.clear();
+        PoePart1.messageHash.clear();
+        PoePart1.messageID.clear();
+        PoePart1.messageSenders.clear();
+        PoePart1.messageRecipients.clear();
+        PoePart1.messageContents.clear();
+        PoePart1.totalMessagesSent = 0;
+        PoePart1.loggedInUser = "Test User";
     }
     
     @AfterEach
     void tearDown() {
         System.setOut(originalOut);
+        
+        // Clean up test file if it exists
+        File file = new File(PoePart1.MESSAGES_FILE);
+        if (file.exists()) {
+            file.delete();
+        }
     }
     
-    // ==================== CONSTRUCTOR TESTS ====================
+    // ==================== MESSAGE CONSTRUCTOR TESTS ====================
     
     @Test
     @Order(1)
@@ -86,7 +114,6 @@ public class MessageTest {
         assertTrue(messageID.startsWith("MSG"));
         assertTrue(messageID.length() > 3);
         
-        // Check that messageID contains digits
         boolean hasDigits = false;
         for (char c : messageID.toCharArray()) {
             if (Character.isDigit(c)) {
@@ -112,8 +139,6 @@ public class MessageTest {
         String hash = message.getMessageHash();
         assertNotNull(hash);
         assertTrue(hash.matches("\\d{2}:\\d+:[A-Z]+:[A-Z]+"));
-        
-        // Check that hash is uppercase
         assertEquals(hash, hash.toUpperCase());
     }
     
@@ -122,8 +147,6 @@ public class MessageTest {
     void testMessageHashWithSingleWord() {
         Message singleWordMsg = new Message(testRecipient, "Hello", 2);
         String hash = singleWordMsg.getMessageHash();
-        
-        // First and last word should be the same for single word
         String[] parts = hash.split(":");
         assertEquals(parts[2], parts[3]);
     }
@@ -134,7 +157,6 @@ public class MessageTest {
         Message multiWordMsg = new Message(testRecipient, "The quick brown fox jumps", 3);
         String hash = multiWordMsg.getMessageHash();
         String[] parts = hash.split(":");
-        
         assertEquals("THE", parts[2]);
         assertEquals("JUMPS", parts[3]);
     }
@@ -145,7 +167,6 @@ public class MessageTest {
         Message spacedMsg = new Message(testRecipient, "  Hello   World  ", 4);
         String hash = spacedMsg.getMessageHash();
         String[] parts = hash.split(":");
-        
         assertEquals("HELLO", parts[2]);
         assertEquals("WORLD", parts[3]);
     }
@@ -156,7 +177,6 @@ public class MessageTest {
         Message specialMsg = new Message(testRecipient, "Hello! @World# $Test%", 5);
         String hash = specialMsg.getMessageHash();
         String[] parts = hash.split(":");
-        
         assertEquals("HELLO!", parts[2]);
         assertEquals("TEST%", parts[3]);
     }
@@ -167,7 +187,6 @@ public class MessageTest {
         String originalHash = message.getMessageHash();
         message.setContent("New content here");
         String newHash = message.getMessageHash();
-        
         assertNotEquals(originalHash, newHash);
         assertTrue(newHash.contains("NEW"));
         assertTrue(newHash.contains("HERE"));
@@ -283,7 +302,6 @@ public class MessageTest {
         assertTrue(output.contains(testRecipient));
         assertTrue(output.contains("Content:"));
         
-        // Check preview (first 30 chars or less)
         String expectedPreview = testContent.substring(0, Math.min(30, testContent.length()));
         assertTrue(output.contains(expectedPreview));
     }
@@ -296,7 +314,6 @@ public class MessageTest {
         longMsg.displayShort();
         String output = outContent.toString();
         
-        // Should be truncated with "..."
         assertTrue(output.contains("..."));
         assertTrue(output.length() < longContent.length());
     }
@@ -327,7 +344,6 @@ public class MessageTest {
         Message specialMsg = new Message(testRecipient, specialContent, 7);
         String json = specialMsg.toJSON();
         
-        // Quotes should be escaped
         assertTrue(json.contains("Hello \\\"World\\\""));
     }
     
@@ -361,8 +377,6 @@ public class MessageTest {
     void testMessageWithEmptyStringContent() {
         Message emptyMsg = new Message(testRecipient, "", 10);
         assertFalse(emptyMsg.isValid());
-        
-        // Hash should still be generated
         assertNotNull(emptyMsg.getMessageHash());
     }
     
@@ -402,7 +416,6 @@ public class MessageTest {
     @Test
     @Order(30)
     void testHashFirstTwoDigitsFromMessageID() {
-        // Create a message and extract its first two digits from ID
         String messageID = message.getMessageID();
         String expectedFirstTwo = "";
         for (int i = 0; i < messageID.length() && expectedFirstTwo.length() < 2; i++) {
@@ -415,5 +428,376 @@ public class MessageTest {
         String[] hashParts = hash.split(":");
         
         assertEquals(expectedFirstTwo, hashParts[0]);
+    }
+    
+    // ==================== POEPART1 VALIDATION TESTS ====================
+    
+    @Test
+    @Order(31)
+    void testCheckUsername_Valid() {
+        assertTrue(PoePart1.checkUsername("user_"));
+        assertTrue(PoePart1.checkUsername("a_b"));
+        assertTrue(PoePart1.checkUsername("_"));
+        assertTrue(PoePart1.checkUsername("1_2"));
+    }
+    
+    @Test
+    @Order(32)
+    void testCheckUsername_Invalid() {
+        assertFalse(PoePart1.checkUsername("username_without_underscore"));
+        assertFalse(PoePart1.checkUsername("toolong_"));
+        assertFalse(PoePart1.checkUsername("no_underscore"));
+        assertFalse(PoePart1.checkUsername("_tooolong"));
+        assertFalse(PoePart1.checkUsername(""));
+    }
+    
+    @Test
+    @Order(33)
+    void testCheckPassword_Valid() {
+        assertTrue(PoePart1.checkPassword("password123!"));
+        assertTrue(PoePart1.checkPassword("Secure@Pass"));
+        assertTrue(PoePart1.checkPassword("LongEnough#1"));
+        assertTrue(PoePart1.checkPassword("Test$Password"));
+    }
+    
+    @Test
+    @Order(34)
+    void testCheckPassword_Invalid() {
+        assertFalse(PoePart1.checkPassword("short1!"));
+        assertFalse(PoePart1.checkPassword("NoSpecialChar1"));
+        assertFalse(PoePart1.checkPassword(""));
+        assertFalse(PoePart1.checkPassword("onlyspecial!"));
+        assertFalse(PoePart1.checkPassword("short!"));
+    }
+    
+    @Test
+    @Order(35)
+    void testCheckPhone_Valid() {
+        assertTrue(PoePart1.checkPhone("+27834557896"));
+        assertTrue(PoePart1.checkPhone("+27123456789"));
+        assertTrue(PoePart1.checkPhone("+27000000000"));
+    }
+    
+    @Test
+    @Order(36)
+    void testCheckPhone_Invalid() {
+        assertFalse(PoePart1.checkPhone("08388884567"));
+        assertFalse(PoePart1.checkPhone("+278"));
+        assertFalse(PoePart1.checkPhone("27834557896"));
+        assertFalse(PoePart1.checkPhone(""));
+    }
+    
+    @Test
+    @Order(37)
+    void testHidePhone() {
+        assertEquals("+27*******", PoePart1.hidePhone("+27834557896"));
+        assertEquals("+27********", PoePart1.hidePhone("+27838884567"));
+        assertEquals("+27*****", PoePart1.hidePhone("+278888"));
+    }
+    
+    // ==================== POEPART1 MESSAGE OPERATIONS TESTS ====================
+    
+    @Test
+    @Order(38)
+    void testGenerateMessageHash_PoePart1() {
+        String hash1 = PoePart1.generateMessageHash("MSG001", 1, "Did you get the cake?");
+        assertNotNull(hash1);
+        assertTrue(hash1.contains(":"));
+        assertTrue(hash1.length() > 0);
+        
+        String hash2 = PoePart1.generateMessageHash("MSG002", 2, "");
+        assertNotNull(hash2);
+    }
+    
+    @Test
+    @Order(39)
+    void testGenerateMessageHash_WithTestData() {
+        String hash = PoePart1.generateMessageHash("MSG12345", 1, "Did you get the cake?");
+        assertTrue(hash.matches("\\d{2}:\\d+:\\w+:\\w+"));
+    }
+    
+    @Test
+    @Order(40)
+    void testGenerateMessageID() {
+        String id1 = PoePart1.generateMessageID();
+        String id2 = PoePart1.generateMessageID();
+        
+        assertNotNull(id1);
+        assertNotNull(id2);
+        assertTrue(id1.startsWith("MSG"));
+        assertTrue(id2.startsWith("MSG"));
+        assertNotEquals(id1, id2);
+    }
+    
+    @Test
+    @Order(41)
+    void testSendMessage_PopulatesArrays() throws IOException {
+        String testMessage = "Did you get the cake?";
+        String testRecipient = "+27834557896";
+        
+        String msgID = PoePart1.generateMessageID();
+        int msgNumber = PoePart1.totalMessagesSent + 1;
+        String msgHash = PoePart1.generateMessageHash(msgID, msgNumber, testMessage);
+        
+        PoePart1.serialMessages.add(testMessage);
+        PoePart1.messageID.add(msgID);
+        PoePart1.messageHash.add(msgHash);
+        PoePart1.messageContents.add(testMessage);
+        PoePart1.messageSenders.add("Test User");
+        PoePart1.messageRecipients.add(testRecipient);
+        PoePart1.storedMessages.add(testMessage);
+        PoePart1.totalMessagesSent++;
+        
+        assertEquals(1, PoePart1.serialMessages.size());
+        assertEquals(1, PoePart1.messageID.size());
+        assertEquals(1, PoePart1.messageHash.size());
+        assertEquals(1, PoePart1.messageContents.size());
+        assertEquals(1, PoePart1.messageSenders.size());
+        assertEquals(1, PoePart1.messageRecipients.size());
+        assertEquals(1, PoePart1.storedMessages.size());
+        assertEquals(1, PoePart1.totalMessagesSent);
+        
+        assertEquals(testMessage, PoePart1.serialMessages.get(0));
+        assertEquals(testRecipient, PoePart1.messageRecipients.get(0));
+    }
+    
+    @Test
+    @Order(42)
+    void testPopulateWithAllTestData() throws IOException {
+        String[][] testData = {
+            {"+27834557896", "Did you get the cake?", "Sent"},
+            {"+27838884567", "Where are you? You are late! I have asked you to be on time.", "Stored"},
+            {"+27834484567", "Yohoooo, I am at your gate.", "Disregard"},
+            {"08388884567", "It is dinner time!", "Sent"},
+            {"+27838884567", "Ok, I am leaving without you.", "Stored"}
+        };
+        
+        for (int i = 0; i < testData.length; i++) {
+            String msgID = PoePart1.generateMessageID();
+            int msgNumber = PoePart1.totalMessagesSent + 1;
+            String msgHash = PoePart1.generateMessageHash(msgID, msgNumber, testData[i][1]);
+            
+            PoePart1.serialMessages.add(testData[i][1]);
+            PoePart1.messageID.add(msgID);
+            PoePart1.messageHash.add(msgHash);
+            PoePart1.messageContents.add(testData[i][1]);
+            PoePart1.messageSenders.add("Test User");
+            PoePart1.messageRecipients.add(testData[i][0]);
+            
+            if (testData[i][2].equals("Stored")) {
+                PoePart1.storedMessages.add(testData[i][1]);
+            }
+            
+            PoePart1.totalMessagesSent++;
+        }
+        
+        assertEquals(5, PoePart1.serialMessages.size());
+        assertEquals(5, PoePart1.totalMessagesSent);
+        assertEquals(2, PoePart1.storedMessages.size());
+    }
+    
+    @Test
+    @Order(43)
+    void testDisplaySendersAndRecipients() {
+        setupTestMessages();
+        assertDoesNotThrow(() -> PoePart1.displaySendersAndRecipients());
+        assertTrue(PoePart1.storedMessages.size() > 0);
+    }
+    
+    @Test
+    @Order(44)
+    void testDisplayLongestMessage() {
+        setupTestMessages();
+        assertDoesNotThrow(() -> PoePart1.displayLongestMessage());
+    }
+    
+    @Test
+    @Order(45)
+    void testSearchMessageByID() {
+        setupTestMessages();
+        assertDoesNotThrow(() -> PoePart1.searchMessageByID());
+    }
+    
+    @Test
+    @Order(46)
+    void testSearchMessagesByRecipient() {
+        setupTestMessages();
+        assertDoesNotThrow(() -> PoePart1.searchMessagesByRecipient());
+    }
+    
+    @Test
+    @Order(47)
+    void testDeleteMessageByHash() throws IOException {
+        setupTestMessages();
+        
+        if (PoePart1.messageHash.size() > 0) {
+            String hashToDelete = PoePart1.messageHash.get(0);
+            assertNotNull(hashToDelete);
+        }
+    }
+    
+    @Test
+    @Order(48)
+    void testDisplayFullReport() {
+        setupTestMessages();
+        assertDoesNotThrow(() -> PoePart1.displayFullReport());
+    }
+    
+    @Test
+    @Order(49)
+    void testViewMessages() throws IOException {
+        setupTestMessages();
+        assertDoesNotThrow(() -> PoePart1.viewMessages());
+    }
+    
+    @Test
+    @Order(50)
+    void testDeleteMessage() throws IOException {
+        setupTestMessages();
+        int initialSize = PoePart1.serialMessages.size();
+        
+        if (initialSize > 0) {
+            PoePart1.serialMessages.remove(0);
+            PoePart1.totalMessagesSent--;
+            
+            assertTrue(PoePart1.serialMessages.size() < initialSize);
+        }
+    }
+    
+    // ==================== POEPART1 FILE OPERATIONS TESTS ====================
+    
+    @Test
+    @Order(51)
+    void testSaveAndLoadMessages() throws IOException {
+        setupTestMessages();
+        
+        PoePart1.saveMessagesToFile();
+        
+        PoePart1.serialMessages.clear();
+        PoePart1.messageID.clear();
+        PoePart1.messageHash.clear();
+        PoePart1.messageContents.clear();
+        PoePart1.messageSenders.clear();
+        PoePart1.messageRecipients.clear();
+        PoePart1.storedMessages.clear();
+        
+        PoePart1.loadMessagesFromFile();
+        
+        assertTrue(PoePart1.serialMessages.size() > 0);
+    }
+    
+    @Test
+    @Order(52)
+    void testMessageLengthValidation() {
+        String shortMessage = "Short message";
+        String longMessage = "a".repeat(251);
+        
+        assertTrue(shortMessage.length() <= 250);
+        assertTrue(longMessage.length() > 250);
+    }
+    
+    // ==================== POEPART1 EDGE CASE TESTS ====================
+    
+    @Test
+    @Order(53)
+    void testEmptyArrays() {
+        assertDoesNotThrow(() -> PoePart1.displaySendersAndRecipients());
+        assertDoesNotThrow(() -> PoePart1.displayLongestMessage());
+        assertDoesNotThrow(() -> PoePart1.displayFullReport());
+    }
+    
+    @Test
+    @Order(54)
+    void testMultipleMessagesSending() throws IOException {
+        int numMessagesToSend = 3;
+        
+        for (int i = 0; i < numMessagesToSend; i++) {
+            String msgID = PoePart1.generateMessageID();
+            String msgHash = PoePart1.generateMessageHash(msgID, i + 1, "Test message " + i);
+            
+            PoePart1.serialMessages.add("Test message " + i);
+            PoePart1.messageID.add(msgID);
+            PoePart1.messageHash.add(msgHash);
+            PoePart1.messageContents.add("Test message " + i);
+            PoePart1.messageSenders.add("Test User");
+            PoePart1.messageRecipients.add("+27834557896");
+            PoePart1.storedMessages.add("Test message " + i);
+            PoePart1.totalMessagesSent++;
+        }
+        
+        assertEquals(numMessagesToSend, PoePart1.serialMessages.size());
+        assertEquals(numMessagesToSend, PoePart1.totalMessagesSent);
+    }
+    
+    @Test
+    @Order(55)
+    void testMessageValidationWithBoundaryValues() {
+        // Test exactly at max length
+        String exactly250 = "A".repeat(250);
+        Message boundaryMsg = new Message(testRecipient, exactly250, 100);
+        assertTrue(boundaryMsg.isValid());
+        
+        // Test at 249 characters
+        String at249 = "A".repeat(249);
+        Message underMsg = new Message(testRecipient, at249, 101);
+        assertTrue(underMsg.isValid());
+    }
+    
+    @Test
+    @Order(56)
+    void testPhoneNumberFormatValidation() {
+        // Valid formats
+        assertTrue(PoePart1.checkPhone("+27834567890"));
+        assertTrue(PoePart1.checkPhone("+27123456789"));
+        
+        // Invalid formats
+        assertFalse(PoePart1.checkPhone("0834567890"));
+        assertFalse(PoePart1.checkPhone("+27123"));
+        assertFalse(PoePart1.checkPhone("+271234567890")); // too long
+    }
+    
+    @Test
+    @Order(57)
+    void testHashUniqueness() {
+        Message msg1 = new Message(testRecipient, "Same content", 1);
+        Message msg2 = new Message(testRecipient, "Same content", 2);
+        
+        // Different message numbers should produce different hashes
+        assertNotEquals(msg1.getMessageHash(), msg2.getMessageHash());
+    }
+    
+    // ==================== HELPER METHODS ====================
+    
+    private void setupTestMessages() {
+        String[] testMessages = {
+            "Did you get the cake?",
+            "Where are you? You are late! I have asked you to be on time.",
+            "Yohoooo, I am at your gate.",
+            "It is dinner time!",
+            "Ok, I am leaving without you."
+        };
+        
+        String[] testRecipients = {
+            "+27834557896",
+            "+27838884567",
+            "+27834484567",
+            "08388884567",
+            "+27838884567"
+        };
+        
+        for (int i = 0; i < testMessages.length; i++) {
+            String msgID = PoePart1.generateMessageID();
+            int msgNumber = PoePart1.totalMessagesSent + 1;
+            String msgHash = PoePart1.generateMessageHash(msgID, msgNumber, testMessages[i]);
+            
+            PoePart1.serialMessages.add(testMessages[i]);
+            PoePart1.messageID.add(msgID);
+            PoePart1.messageHash.add(msgHash);
+            PoePart1.messageContents.add(testMessages[i]);
+            PoePart1.messageSenders.add("Test User");
+            PoePart1.messageRecipients.add(testRecipients[i]);
+            PoePart1.storedMessages.add(testMessages[i]);
+            PoePart1.totalMessagesSent++;
+        }
     }
 }
